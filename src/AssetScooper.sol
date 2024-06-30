@@ -5,7 +5,7 @@ pragma solidity ^0.8.13;
 import "./Interfaces/IUniswapV2Pair.sol";
 import "./Lib/UniswapV2Library.sol";
 import "./Lib/TransferHelper.sol";
-import "solady/src/utils/ReentrancyGuard.sol";
+import "solady/ReentrancyGuard.sol";
 
 contract AssetScooper is ReentrancyGuard {
     address private immutable i_owner;
