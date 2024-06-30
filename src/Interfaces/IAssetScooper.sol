@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.20;
+pragma solidity ^0.8.13;
 
 // Import necessary contracts from Uniswap
 import 'solady/src/utils/ReentrancyGuard.sol';
