@@ -6,19 +6,19 @@ import "./Interfaces/IUniswapV2Pair.sol";
 import "./Lib/UniswapV2Library.sol";
 import "./Lib/TransferHelper.sol";
 import "solady/ReentrancyGuard.sol";
-import "forge-std/console.sol";
+import {IWETH} from "./Interfaces/IWETH.sol";
 
 contract AssetScooper is ReentrancyGuard {
     address private immutable i_owner;
 
     string private constant i_version = "1.0.0";
 
-    bytes4 private constant interfaceId = 0x36372b07;
-
-    address private constant weth = 0x4200000000000000000000000000000000000006;
+    address private constant WETH = 0x4200000000000000000000000000000000000006;
 
     address private constant factory =
         0x8909Dc15e40173Ff4699343b6eB8132c65e18eC6;
+
+    uint24 public constant poolFee = 3000;
 
     event TokenSwapped(
         address indexed user,
@@ -44,24 +44,17 @@ contract AssetScooper is ReentrancyGuard {
         i_owner = msg.sender;
     }
 
+    modifier ensure(uint deadline) {
+        require(deadline >= block.timestamp, 'UniswapV2Router: EXPIRED');
+        _;
+    }
+
     function owner() public view returns (address) {
         return i_owner;
     }
 
     function version() public pure returns (string memory) {
         return i_version;
-    }
-
-    function _checkIfPairExists(
-        address _factory,
-        address tokenAddress
-    ) public pure returns (bool) {
-        address pairAddress = UniswapV2Library.pairFor(
-            _factory,
-            tokenAddress,
-            weth
-        );
-        return pairAddress != address(0);
     }
 
     function _getAmountIn(
@@ -92,67 +85,44 @@ contract AssetScooper is ReentrancyGuard {
         uint256[] calldata minAmountOut
     ) public nonReentrant {
         if (tokenAddress.length == 0) revert AssetScooper__ZeroLengthArray();
-        if (tokenAddress.length != minAmountOut.length)
-            revert AssetScooper__MisMatchLength();
+        if (tokenAddress.length != minAmountOut.length) revert AssetScooper__MisMatchLength();
 
-        uint256 totalEth;
+        address[] memory path = new address[](2);
+        path[1] = WETH;
+
+        uint totalETH;
 
         for (uint256 i = 0; i < tokenAddress.length; i++) {
-            address pairAddress = UniswapV2Library.pairFor(
-                factory,
-                tokenAddress[i],
-                weth
-            );
-            totalEth += _swap(pairAddress, minAmountOut[i]);
+            path[0] = tokenAddress[i];
+            uint amountIn = _getTokenBalance(tokenAddress[i], msg.sender);
+            totalETH += swap(amountIn, minAmountOut[i], path, block.timestamp + 1000);
         }
-        console.log("totalEth", totalEth);
-        console.log("balanceEth", address(this).balance);
-
-        TransferHelper.safeTransferETH(msg.sender, totalEth);
-
-        console.log("Done");
+        TransferHelper.safeTransfer(WETH, msg.sender, totalETH);
     }
 
-    function _swap(
-        address pairAddress,
-        uint256 minimumOutputAmount
-    ) private returns (uint256 amountOut) {
-        address addr = pairAddress;
-        IUniswapV2Pair pair = IUniswapV2Pair(addr);
-
-        address tokenA = pair.token0();
-        address tokenB = pair.token1();
-        address tokenIn = tokenA == weth ? tokenB : tokenA;
-
-        uint256 tokenBalance = _getTokenBalance(tokenIn, msg.sender);
-        if (tokenBalance < 0) revert AssetScooper__InsufficientBalance();
-
-        uint256 amountIn = _getAmountIn(tokenIn, tokenBalance);
-        (uint reserveA, uint reserveB) = UniswapV2Library.getReserves(
-            pair.factory(),
-            tokenA,
-            tokenB
-        );
-
-        amountOut = UniswapV2Library.getAmountOut(
-            amountIn,
-            reserveA,
-            reserveB
-        );
-        if (amountOut < minimumOutputAmount)
-            revert AssetScooper__InsufficientOutputAmount();
-
+    
+     function swap(uint amountIn, uint amountOutMin, address[] memory path, uint deadline) private ensure(deadline) returns (uint amount) {
+        require(path[path.length - 1] == WETH, 'UniswapV2Router: INVALID_PATH');
+        uint[] memory amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
+        require(amounts[amounts.length - 1] >= amountOutMin, 'UniswapV2Router: INSUFFICIENT_OUTPUT_AMOUNT');
         TransferHelper.safeTransferFrom(
-            tokenIn,
-            msg.sender,
-            addr,
-            amountIn
+            path[0], msg.sender, UniswapV2Library.pairFor(factory, path[0], path[1]), amounts[0]
         );
-        uint amount0Out = tokenA == weth ? amountOut : 0;
-        uint amount1Out = tokenA == weth ? 0 : amountOut;
-        console.log("Swap amount", amountIn, amountOut);
-        pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
+        _swap(amounts, path, address(this));
+        return amounts[amounts.length - 1];
+    }
 
-        emit TokenSwapped(msg.sender, tokenA, amountIn, amountOut);
+
+    function _swap(uint[] memory amounts, address[] memory path, address _to) internal virtual {
+        for (uint i; i < path.length - 1; i++) {
+            (address input, address output) = (path[i], path[i + 1]);
+            (address token0,) = UniswapV2Library.sortTokens(input, output);
+            uint amountOut = amounts[i + 1];
+            (uint amount0Out, uint amount1Out) = input == token0 ? (uint(0), amountOut) : (amountOut, uint(0));
+            address to = i < path.length - 2 ? UniswapV2Library.pairFor(factory, output, path[i + 2]) : _to;
+            IUniswapV2Pair(UniswapV2Library.pairFor(factory, input, output)).swap(
+                amount0Out, amount1Out, to, new bytes(0)
+            );
+        }
     }
 }
