@@ -6,13 +6,14 @@ import "./Interfaces/IUniswapV2Pair.sol";
 import "./Lib/UniswapV2Library.sol";
 import "./Lib/TransferHelper.sol";
 import "solady/ReentrancyGuard.sol";
+import "forge-std/console.sol";
 
 contract AssetScooper is ReentrancyGuard {
     address private immutable i_owner;
 
     string private constant i_version = "1.0.0";
 
-    bytes4 private constant interfaceId = 0x01ffc9a7;
+    bytes4 private constant interfaceId = 0x36372b07;
 
     address private constant weth = 0x4200000000000000000000000000000000000006;
 
@@ -51,20 +52,10 @@ contract AssetScooper is ReentrancyGuard {
         return i_version;
     }
 
-    function _checkIfERC20Token(
-        address tokenAddress
-    ) internal view returns (bool) {
-        (bool success, bytes memory data) = tokenAddress.staticcall(
-            abi.encodeWithSignature("supportsInterface(bytes4)", interfaceId)
-        );
-        if (!success) revert AssetScooper__UnsupportedToken();
-        return abi.decode(data, (bool));
-    }
-
     function _checkIfPairExists(
         address _factory,
         address tokenAddress
-    ) internal pure returns (bool) {
+    ) public pure returns (bool) {
         address pairAddress = UniswapV2Library.pairFor(
             _factory,
             tokenAddress,
@@ -112,68 +103,55 @@ contract AssetScooper is ReentrancyGuard {
                 tokenAddress[i],
                 weth
             );
-
             totalEth += _swap(pairAddress, minAmountOut[i]);
         }
+        console.log("totalEth", totalEth);
+        console.log("balanceEth", address(this).balance);
 
         TransferHelper.safeTransferETH(msg.sender, totalEth);
+
+        console.log("Done");
     }
 
     function _swap(
         address pairAddress,
         uint256 minimumOutputAmount
-    ) internal nonReentrant returns (uint256 amountOut) {
-        IUniswapV2Pair pair = IUniswapV2Pair(pairAddress);
+    ) private returns (uint256 amountOut) {
+        address addr = pairAddress;
+        IUniswapV2Pair pair = IUniswapV2Pair(addr);
 
         address tokenA = pair.token0();
         address tokenB = pair.token1();
+        address tokenIn = tokenA == weth ? tokenB : tokenA;
 
-        if ((tokenA == address(0)) && (tokenB == address(0)))
-            revert AssetScooper__AddressZero();
-        if ((tokenA == weth) && (tokenB == tokenA))
-            revert AssetScooper__MisMatchToken();
-
-        if (!_checkIfERC20Token(tokenA))
-            revert AssetScooper__UnsupportedToken();
-        if (!_checkIfPairExists(pair.factory(), tokenA))
-            revert AssetScooper_PairDoesNotExist();
-
-        uint256 tokenBalance = _getTokenBalance(tokenA, msg.sender);
-
+        uint256 tokenBalance = _getTokenBalance(tokenIn, msg.sender);
         if (tokenBalance < 0) revert AssetScooper__InsufficientBalance();
 
-        uint256 amountIn = _getAmountIn(tokenA, tokenBalance);
-
+        uint256 amountIn = _getAmountIn(tokenIn, tokenBalance);
         (uint reserveA, uint reserveB) = UniswapV2Library.getReserves(
             pair.factory(),
             tokenA,
             tokenB
         );
 
-        uint256 pairBalanceA = _getTokenBalance(tokenA, pairAddress);
-        uint256 pairBalanceB = _getTokenBalance(tokenB, pairAddress);
-
-        if (pairBalanceB > pairBalanceA) {
-            amountOut = UniswapV2Library.getAmountOut(
-                amountIn,
-                reserveA,
-                reserveB
-            );
-        }
-
+        amountOut = UniswapV2Library.getAmountOut(
+            amountIn,
+            reserveA,
+            reserveB
+        );
         if (amountOut < minimumOutputAmount)
             revert AssetScooper__InsufficientOutputAmount();
 
         TransferHelper.safeTransferFrom(
-            tokenA,
+            tokenIn,
             msg.sender,
-            pairAddress,
+            addr,
             amountIn
         );
-
-        if (pairBalanceB > pairBalanceA) {
-            pair.swap(0, amountOut, address(this), new bytes(0));
-        }
+        uint amount0Out = tokenA == weth ? amountOut : 0;
+        uint amount1Out = tokenA == weth ? 0 : amountOut;
+        console.log("Swap amount", amountIn, amountOut);
+        pair.swap(amount0Out, amount1Out, address(this), new bytes(0));
 
         emit TokenSwapped(msg.sender, tokenA, amountIn, amountOut);
     }

@@ -4,16 +4,53 @@ pragma solidity ^0.8.13;
 import {Test, console} from "forge-std/Test.sol";
 import {AssetScooper} from "../src/AssetScooper.sol";
 
+
+interface IERC20 {
+    function totalSupply() external view returns (uint256);
+    function balanceOf(address account) external view returns (uint256);
+    function transfer(address recipient, uint256 amount)
+        external
+        returns (bool);
+    function allowance(address owner, address spender)
+        external
+        view
+        returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount)
+        external
+        returns (bool);
+
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(
+        address indexed owner, address indexed spender, uint256 value
+    );
+}
+// 0x9DE16c805A3227b9b92e39a446F9d56cf59fe640 BENTO
+// 0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb DAI
 contract AssetScooperTest is Test {
     AssetScooper public assetScooper;
+    IERC20 public dai;
 
     function setUp() public {
         assetScooper = new AssetScooper();
+        dai = IERC20(0x50c5725949A6F0c72E6C4a641F24049A917DB0Cb);
     }
 
+    function testSweep() public {
+        uint hundredDAI = 1 * 1e18;
 
-    // function testFuzz_SetNumber(uint256 x) public {
-    //     assetScooper.setNumber(x);
-    //     assertEq(assetScooper.number(), x);
-    // }
+        deal(address(dai), address(1), hundredDAI, true);
+        vm.startPrank(address(1));
+        dai.approve(address(assetScooper), hundredDAI);
+        
+        address[] memory tokens = new address[](1);
+        tokens[0] = address(dai);
+
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 0;
+
+        assertEq(dai.balanceOf(address(1)), hundredDAI);
+        assetScooper.sweepTokens(tokens, amounts);
+
+    }
 }
