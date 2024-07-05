@@ -6,6 +6,7 @@ import "./Interfaces/IUniswapV2Pair.sol";
 import "./Lib/UniswapV2Library.sol";
 import "./Lib/TransferHelper.sol";
 import "solady/ReentrancyGuard.sol";
+import "forge-std/console.sol";
 import {IWETH} from "./Interfaces/IWETH.sol";
 
 contract AssetScooper is ReentrancyGuard {
@@ -80,7 +81,18 @@ contract AssetScooper is ReentrancyGuard {
         tokenBalance = abi.decode(data, (uint256));
     }
 
-    function sweepTokens(
+    function testTransfer(
+        address token,
+        address to,
+        uint256 amount
+    ) public {
+        console.log("Token: ", token);
+        console.log("From: ", msg.sender);
+        console.log("To: ", to);
+        console.log("Amount: ", amount);
+        TransferHelper.safeTransferFrom(token, msg.sender, to, amount);
+    }
+ function sweepTokens(
         address[] calldata tokenAddress,
         uint256[] calldata minAmountOut
     ) public nonReentrant {
@@ -93,14 +105,16 @@ contract AssetScooper is ReentrancyGuard {
         uint totalETH;
 
         for (uint256 i = 0; i < tokenAddress.length; i++) {
-            path[0] = tokenAddress[i];
-            uint amountIn = _getTokenBalance(tokenAddress[i], msg.sender);
-            totalETH += swap(amountIn, minAmountOut[i], path, block.timestamp + 1000);
+            address tokenAddr = tokenAddress[i];
+            path[0] = tokenAddr;
+            uint amountIn = _getTokenBalance(tokenAddr, msg.sender);
+            uint amountOut = swap(amountIn, minAmountOut[i], path, block.timestamp + 1000);
+            totalETH += amountOut;
+            emit TokenSwapped(msg.sender, tokenAddr, amountIn, amountOut);
         }
         TransferHelper.safeTransfer(WETH, msg.sender, totalETH);
     }
 
-    
      function swap(uint amountIn, uint amountOutMin, address[] memory path, uint deadline) private ensure(deadline) returns (uint amount) {
         require(path[path.length - 1] == WETH, 'UniswapV2Router: INVALID_PATH');
         uint[] memory amounts = UniswapV2Library.getAmountsOut(factory, amountIn, path);
@@ -124,5 +138,26 @@ contract AssetScooper is ReentrancyGuard {
                 amount0Out, amount1Out, to, new bytes(0)
             );
         }
+    }
+}
+
+
+contract ApprovalHelper {
+    function approveToken(IERC20 token, address spender, uint256 amount) public returns (bool) {
+        // Prepare the function signature and arguments
+        bytes memory data = abi.encodeWithSignature("approve(address,uint256)", spender, amount);
+
+        // Perform the low-level call
+        (bool success, bytes memory returnData) = address(token).call(data);
+        require(success, "Approve call failed");
+
+        // Optionally, check the return value (should be true for a successful approve)
+        bool result;
+        if (returnData.length > 0) {
+            result = abi.decode(returnData, (bool));
+            require(result, "Approve returned false");
+        }
+
+        return true;
     }
 }
